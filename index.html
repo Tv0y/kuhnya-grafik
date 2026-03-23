@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Расписание смен</title>
+    
+    <script src='https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.js'></script>
+    
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f4f4f9; color: #333; }
+        #login-screen { max-width: 320px; margin: 40px auto; background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+        #app-screen { display: none; }
+        input, select, button { width: 100%; padding: 12px; margin: 8px 0; box-sizing: border-box; border-radius: 6px; border: 1px solid #ccc; font-size: 16px; }
+        button { background-color: #4CAF50; color: white; border: none; cursor: pointer; font-weight: bold; transition: background-color 0.2s; }
+        button:hover { background-color: #45a049; }
+        #calendar { max-width: 1000px; margin: 0 auto; background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+        .header-info { text-align: center; margin-bottom: 20px; }
+        .action-buttons { display: flex; justify-content: center; gap: 10px; margin-top: 15px; }
+        
+        .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.6); align-items: center; justify-content: center; padding: 10px; box-sizing: border-box; }
+        .modal-content { background-color: white; padding: 25px; border-radius: 12px; width: 100%; max-width: 350px; box-shadow: 0 10px 25px rgba(0,0,0,0.2); position: relative; }
+        .close-btn { position: absolute; right: 15px; top: 15px; font-size: 28px; cursor: pointer; color: #888; line-height: 1; }
+        .form-group { margin-bottom: 15px; text-align: left; }
+        .form-group label { font-size: 14px; font-weight: bold; color: #555; display: block; margin-bottom: 5px; }
+
+        @media (max-width: 768px) {
+            body { margin: 10px; }
+            #calendar { padding: 10px; }
+            .action-buttons { flex-direction: column; width: 100%; gap: 8px; }
+            .action-buttons button { width: 100%; padding: 14px; font-size: 16px; }
+            .fc .fc-toolbar { flex-direction: column; gap: 12px; }
+            .fc .fc-toolbar-chunk { display: flex; justify-content: center; flex-wrap: wrap; gap: 5px; width: 100%; }
+            .fc .fc-toolbar-title { font-size: 1.3em; text-align: center; }
+            .fc .fc-button { padding: 8px 10px; font-size: 14px; }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="login-screen">
+        <h2 style="text-align: center; margin-top: 0;">Вход в систему</h2>
+        <p style="font-size: 13px; color: gray; text-align: center; margin-bottom: 20px;">
+            Админ: <b>admin</b> | Сотрудник: <b>user</b>
+        </p>
+        <input type="text" id="username" placeholder="Логин">
+        <button onclick="login()">Войти</button>
+    </div>
+
+    <div id="app-screen">
+        <div class="header-info">
+            <h3 id="user-role-display" style="margin-bottom: 5px;"></h3>
+            <div class="action-buttons">
+                <button id="add-shift-btn" style="display: none; background-color: #2196F3;" onclick="openModal()">+ Добавить смену</button>
+                <button onclick="logout()" style="background-color: #f44336;">Выйти</button>
+            </div>
+        </div>
+        <div id="calendar"></div>
+    </div>
+
+    <div id="shift-modal" class="modal">
+        <div class="modal-content">
+            <span class="close-btn" onclick="closeModal()">&times;</span>
+            <h3 style="margin-top: 0; margin-bottom: 20px;">Добавить смену</h3>
+            <div class="form-group"><label>Сотрудник / Роль:</label><input type="text" id="shift-title" placeholder="Повар (Иван)"></div>
+            <div class="form-group"><label>Дата:</label><input type="date" id="shift-date"></div>
+            <div style="display: flex; gap: 10px;">
+                <div class="form-group" style="width: 50%;"><label>Начало:</label><input type="time" id="shift-start" value="08:00"></div>
+                <div class="form-group" style="width: 50%;"><label>Конец:</label><input type="time" id="shift-end" value="20:00"></div>
+            </div>
+            <button onclick="saveShift()" style="margin-top: 10px;">Сохранить</button>
+        </div>
+    </div>
+
+    <script>
+        // ==========================================
+        // 1. НАСТРОЙКА FIREBASE (Ваши ключи)
+        // ==========================================
+        const firebaseConfig = {
+            apiKey: "AIzaSyCvVK-1lO1zjyrR8SCOrv3VgDAFApss1as",
+            authDomain: "kitchenschedule-f1b79.firebaseapp.com",
+            projectId: "kitchenschedule-f1b79",
+            storageBucket: "kitchenschedule-f1b79.firebasestorage.app",
+            messagingSenderId: "25040170984",
+            appId: "1:25040170984:web:98515f957dfc42040c3e5d"
+        };
+
+        // Инициализация
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.firestore();
+
+        let isAdmin = false;
+        let calendar;
+        let globalShifts = []; 
+
+        // ==========================================
+        // 2. СИНХРОНИЗАЦИЯ В РЕАЛЬНОМ ВРЕМЕНИ
+        // ==========================================
+        db.collection("shifts").onSnapshot((querySnapshot) => {
+            globalShifts = [];
+            querySnapshot.forEach((doc) => {
+                let data = doc.data();
+                data.id = doc.id; 
+                globalShifts.push(data);
+            });
+            
+            if (calendar) {
+                calendar.removeAllEvents();
+                globalShifts.forEach(shift => calendar.addEvent(shift));
+            }
+        });
+
+        // ==========================================
+        // 3. ЛОГИКА ИНТЕРФЕЙСА И КАЛЕНДАРЯ
+        // ==========================================
+        function login() {
+            const username = document.getElementById('username').value.toLowerCase();
+            if (username === 'admin') { isAdmin = true; showApp('Администратор'); } 
+            else if (username === 'user') { isAdmin = false; showApp('Сотрудник'); } 
+            else { alert('Неверный логин.'); }
+        }
+
+        function logout() {
+            document.getElementById('login-screen').style.display = 'block';
+            document.getElementById('app-screen').style.display = 'none';
+            document.getElementById('username').value = '';
+            if (calendar) { calendar.destroy(); calendar = null; }
+        }
+
+        function showApp(roleName) {
+            document.getElementById('login-screen').style.display = 'none';
+            document.getElementById('app-screen').style.display = 'block';
+            document.getElementById('user-role-display').innerText = 'Роль: ' + roleName;
+            document.getElementById('add-shift-btn').style.display = isAdmin ? 'block' : 'none';
+            document.getElementById('shift-date').value = new Date().toISOString().split('T')[0];
+            initCalendar();
+        }
+
+        function initCalendar() {
+            let calendarEl = document.getElementById('calendar');
+            let isMobile = window.innerWidth < 768;
+            
+            calendar = new FullCalendar.Calendar(calendarEl, {
+                initialView: isMobile ? 'listDay' : 'dayGridMonth',
+                locale: 'ru',
+                firstDay: 1, 
+                headerToolbar: { left: 'prev,next today', center: 'title', right: 'dayGridMonth,timeGridWeek,listDay' },
+                buttonText: { today: 'Сегодня', month: 'Месяц', week: 'Неделя', listDay: 'День' },
+                slotMinTime: '06:00:00', slotMaxTime: '24:00:00', dayMaxEvents: 3, 
+                events: globalShifts, 
+                height: isMobile ? 'auto' : 650,
+                
+                dateClick: function(info) {
+                    if (isAdmin) {
+                        let dateOnly = info.dateStr.split('T')[0];
+                        document.getElementById('shift-date').value = dateOnly;
+                        if (info.dateStr.includes('T')) {
+                            document.getElementById('shift-start').value = info.dateStr.split('T')[1].substring(0, 5);
+                        }
+                        openModal();
+                    }
+                },
+
+                eventClick: function(info) {
+                    if (isAdmin) {
+                        if (confirm(`Удалить смену: '${info.event.title}'?`)) {
+                            db.collection("shifts").doc(info.event.id).delete();
+                        }
+                    } else {
+                        let timeString = info.event.start.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                        if (info.event.end) timeString += ' - ' + info.event.end.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                        alert(`Смена: ${info.event.title}\nВремя: ${timeString}`);
+                    }
+                }
+            });
+            calendar.render();
+        }
+
+        function openModal() { document.getElementById('shift-modal').style.display = 'flex'; }
+        function closeModal() { document.getElementById('shift-modal').style.display = 'none'; }
+
+        function saveShift() {
+            let title = document.getElementById('shift-title').value;
+            let date = document.getElementById('shift-date').value;
+            let startTime = document.getElementById('shift-start').value;
+            let endTime = document.getElementById('shift-end').value;
+
+            if (title && date && startTime && endTime) {
+                let startDateTime = date + 'T' + startTime + ':00';
+                let endDateTime = date + 'T' + endTime + ':00';
+
+                db.collection("shifts").add({
+                    title: title,
+                    start: startDateTime,
+                    end: endDateTime,
+                    allDay: false
+                }).then(() => {
+                    closeModal();
+                    document.getElementById('shift-title').value = ''; 
+                });
+            } else {
+                alert('Заполните все поля!');
+            }
+        }
+    </script>
+</body>
+</html>
