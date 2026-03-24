@@ -77,7 +77,7 @@
 
     <script>
         // ==========================================
-        // 1. НАСТРОЙКА FIREBASE (Ваши ключи)
+        // 1. НАСТРОЙКА FIREBASE
         // ==========================================
         const firebaseConfig = {
             apiKey: "AIzaSyCvVK-1lO1zjyrR8SCOrv3VgDAFApss1as",
@@ -97,13 +97,25 @@
         let globalShifts = []; 
 
         // ==========================================
-        // 2. СИНХРОНИЗАЦИЯ В РЕАЛЬНОМ ВРЕМЕНИ
+        // 2. СИНХРОНИЗАЦИЯ И ИНДИКАЦИЯ ЦВЕТОМ
         // ==========================================
         db.collection("shifts").onSnapshot((querySnapshot) => {
             globalShifts = [];
+            let now = new Date(); // Текущее время для проверки
+
             querySnapshot.forEach((doc) => {
                 let data = doc.data();
                 data.id = doc.id; 
+                
+                let startTime = new Date(data.start);
+                
+                // Измененная логика: если время начала уже наступило или прошло — красным
+                if (now >= startTime) {
+                    data.color = '#e74c3c'; // Красный (уже началась или прошла)
+                } else {
+                    data.color = '#3788d8'; // Синий (еще не началась, в будущем)
+                }
+
                 globalShifts.push(data);
             });
             
@@ -113,13 +125,29 @@
             }
         });
 
+        // Таймер обновляет цвета раз в минуту, если смена перешла из статуса "будущая" в "началась"
+        setInterval(() => {
+            if (calendar) {
+                let now = new Date();
+                let events = calendar.getEvents();
+                events.forEach(event => {
+                    if (event.start) {
+                        let hasStarted = (now >= event.start);
+                        let targetColor = hasStarted ? '#e74c3c' : '#3788d8';
+                        if (event.backgroundColor !== targetColor) {
+                            event.setProp('color', targetColor);
+                        }
+                    }
+                });
+            }
+        }, 60000);
+
         // ==========================================
         // 3. ЛОГИКА ИНТЕРФЕЙСА И КАЛЕНДАРЯ
         // ==========================================
         function login() {
             const username = document.getElementById('username').value.toLowerCase();
             
-            // Скрытая проверка: войти как админ можно только по паролю admin0451
             if (username === 'admin0451') { 
                 isAdmin = true; 
                 showApp('Администратор'); 
@@ -157,8 +185,16 @@
                 initialView: isMobile ? 'listDay' : 'dayGridMonth',
                 locale: 'ru',
                 firstDay: 1, 
-                headerToolbar: { left: 'prev,next today', center: 'title', right: 'dayGridMonth,timeGridWeek,listDay' },
-                buttonText: { today: 'Сегодня', month: 'Месяц', week: 'Неделя', listDay: 'День' },
+                headerToolbar: { left: 'prev,next today', center: 'title', right: 'dayGridMonth,listWeek,listDay' },
+                buttonText: { today: 'Сегодня', month: 'Месяц', listWeek: 'Неделя', listDay: 'День' },
+                
+                eventTimeFormat: {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    hour12: false
+                },
+                displayEventEnd: false, 
+                
                 slotMinTime: '06:00:00', slotMaxTime: '24:00:00', dayMaxEvents: 3, 
                 events: globalShifts, 
                 height: isMobile ? 'auto' : 650,
